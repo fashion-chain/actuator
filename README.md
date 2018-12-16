@@ -1,6 +1,6 @@
 # actuator
 合约层
 
-## 服装合约 clothingsol 
+## Clothing contract clothingsol 
 
-用于卖方、生产方、采购方、平台方，对衣服的设计、出售、购买、生产等过程的控制；
+Used by sellers, producers, purchasers, and platform parties to control the design, sale, purchase, and production of clothes;
