@@ -9,6 +9,7 @@ contract ControllerContract{
   function setProducerAddr(string _producerID,address _producerAddr)public;
   function setSellerInfo(string _clothID,string _data,uint256 _confirmNum,uint256 _estimateTime) public;
   function setOrderInfo(string _oriderID,string _dataInfo,uint256 _shipTimes) public;
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256);
 }
 
 contract ProxyContract{
@@ -75,6 +76,13 @@ contract ProxyContract{
     if(isMaster(msg.sender)){
       controllerContract.setOrderInfo(_oriderID,_dataInfo,_shipTimes);
     }
+  }
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
+    uint256 intNum = 0;
+    if(isMaster(msg.sender)){
+      intNum = controllerContract.computerIssue(clothPrice,clothsols);
+    }
+    return intNum;
   }
 
 }

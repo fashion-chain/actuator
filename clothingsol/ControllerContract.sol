@@ -6,6 +6,7 @@ contract PlatformSide{
   function getTransferAddress() public view returns(address);
   function setGas(string orderID,uint256 _gasvalue) public;
   function getGas(string orderID) public view returns(uint256);
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256);
 }
 contract Producer{
   function setEstimateTime(string _clothID,uint256 _estimateTime) public;
@@ -18,12 +19,14 @@ contract Producer{
   function getProducerAddr(string _producerID) public view returns(address);
   function setConfirmNumber(string clothID,uint256 confirmNum) public;
   function getConfirmNumber(string clothID)public view returns(uint256);
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256);
 }
 contract Seller{
   function setSellerData(string clothIDAndSellerID,string clothData) public;
   function getSellerData(string clothIDAndSellerID)public view returns(string);
   function setSellerAddress(string sellerID,address sellerAddr) public;
   function getSellerAddress(string sellerID) public view returns(address);
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256);
 }
 
 contract ControllerContract{
@@ -118,7 +121,12 @@ contract ControllerContract{
       return sign;
   }
 
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
+    return producerContract.computerIssue(clothPrice,clothsols);
+  }
   
+
+
 
 
 }

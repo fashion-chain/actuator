@@ -310,7 +310,9 @@ contract Producer is DateTime{
     return confirmNumber[clothID];
   }
 
-
+  function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
+    return clothPrice.mul(clothsols);
+  }
 
 
 }
