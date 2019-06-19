@@ -5,8 +5,9 @@ import org.fok.actuator.exception.TransactionParameterInvalidException;
 import org.fok.actuator.exception.TransactionVerifyException;
 import org.fok.core.api.IAccountHandler;
 import org.fok.core.api.ITransactionExecutorHandler;
-import org.fok.core.api.ITransactionHandler;
+import org.fok.core.api.ITransactionResultHandler;
 import org.fok.core.cryptoapi.ICryptoHandler;
+import org.fok.core.model.Account.AccountCryptoToken;
 import org.fok.core.model.Account.AccountInfo;
 import org.fok.core.model.Account.AccountInfo.Builder;
 import org.fok.core.model.Account.AccountValue;
@@ -16,43 +17,87 @@ import org.fok.core.model.Transaction.TransactionInfo;
 import org.fok.core.model.Transaction.TransactionInput;
 import org.fok.core.model.Transaction.TransactionOutput;
 import org.fok.core.model.Transaction.TransactionBody;
-import org.fok.core.model.Transaction.TransactionSignature;
 import org.fok.tools.bytes.BytesHashMap;
 import org.fok.tools.bytes.BytesHelper;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class AbstractTransactionActuator implements ITransactionExecutorHandler {
-	protected Map<String, TransactionInfo> txValues = new HashMap<>();
+	protected BytesHashMap<Builder> touchAccounts;
 	protected IAccountHandler iAccountHandler;
-	protected ITransactionHandler iTransactionHandler;
+	protected ITransactionResultHandler iTransactionHandler;
 	protected Block.BlockInfo blockInfo;
 	protected ICryptoHandler iCryptoHandler;
+	// 交易的手续费
+	protected BigInteger fee;
+	// 交易的主币总量
+	protected BigInteger totalAmount;
+	// 交易的token总量
+	protected BytesHashMap<BigInteger> totalTokens;
+	// 交易的crypto token总量
+	protected BytesHashMap<List<AccountCryptoToken.Builder>> totalCryptoTokens;
+
+	protected void reset() {
+		reset(this.iAccountHandler, this.iTransactionHandler, this.iCryptoHandler, this.blockInfo);
+	}
+
+	protected Builder getAccount(ByteString address) {
+		AccountInfo.Builder oTouchAccount = touchAccounts.get(address.toByteArray());
+		if (oTouchAccount == null) {
+			return this.iAccountHandler.getAccountOrCreate(address);
+		} else {
+			return oTouchAccount;
+		}
+	}
+
+	protected Builder getAccount(byte[] address) {
+		return getAccount(ByteString.copyFrom(address));
+	}
+
+	protected void putAccount(AccountInfo.Builder oAccount) {
+		touchAccounts.put(oAccount.getAddress().toByteArray(), oAccount);
+	}
 
 	@Override
 	public boolean needSignature() {
 		return false;
 	}
 
-	public AbstractTransactionActuator(IAccountHandler iAccountHandler, ITransactionHandler iTransactionHandler,
-			BlockInfo currentBlock, ICryptoHandler iCryptoHandler) {
-		this.iAccountHandler = iAccountHandler;
-		this.iTransactionHandler = iTransactionHandler;
-		this.blockInfo = currentBlock;
-		this.iCryptoHandler = iCryptoHandler;
+	@Override
+	public BytesHashMap<Builder> getTouchAccount() {
+		return this.touchAccounts;
 	}
 
-	public void reset(IAccountHandler iAccountHandler, ITransactionHandler iTransactionHandler, BlockInfo currentBlock,
-			ICryptoHandler iCryptoHandler) {
+	public AbstractTransactionActuator(IAccountHandler iAccountHandler, ITransactionResultHandler iTransactionHandler,
+			ICryptoHandler iCryptoHandler, BlockInfo currentBlock) {
 		this.iAccountHandler = iAccountHandler;
 		this.iTransactionHandler = iTransactionHandler;
 		this.blockInfo = currentBlock;
 		this.iCryptoHandler = iCryptoHandler;
-		this.txValues.clear();
+		this.touchAccounts = new BytesHashMap<>();
+		this.fee = BigInteger.ZERO;
+		this.totalAmount = BigInteger.ZERO;
+		totalTokens = null;
+		totalTokens = new BytesHashMap<>();
+		totalCryptoTokens = null;
+		totalCryptoTokens = new BytesHashMap<>();
+	}
+
+	public void reset(IAccountHandler iAccountHandler, ITransactionResultHandler iTransactionHandler,
+			ICryptoHandler iCryptoHandler, BlockInfo currentBlock) {
+		this.iAccountHandler = iAccountHandler;
+		this.iTransactionHandler = iTransactionHandler;
+		this.blockInfo = currentBlock;
+		this.iCryptoHandler = iCryptoHandler;
+		this.touchAccounts = new BytesHashMap<>();
+		this.fee = BigInteger.ZERO;
+		this.totalAmount = BigInteger.ZERO;
+		totalTokens = null;
+		totalTokens = new BytesHashMap<>();
+		totalCryptoTokens = null;
+		totalCryptoTokens = new BytesHashMap<>();
 	}
 
 	@Override
@@ -68,100 +113,40 @@ public class AbstractTransactionActuator implements ITransactionExecutorHandler 
 	}
 
 	@Override
-	public ByteString onExecute(TransactionInfo transactionInfo, BytesHashMap<Builder> accounts) throws Exception {
-		TransactionInput oInput = transactionInfo.getBody().getInputs();
-		AccountInfo.Builder sender = accounts.get(oInput.getAddress().toByteArray());
-		iAccountHandler.setNonce(sender, oInput.getNonce() + 1);
-		iAccountHandler.subBalance(sender, BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray()));
-
-		for (TransactionOutput oOutput : transactionInfo.getBody().getOutputsList()) {
-			AccountInfo.Builder receiver = accounts.get(oOutput.getAddress().toByteArray());
-
-			iAccountHandler.addBalance(receiver, BytesHelper.bytesToBigInteger(oOutput.getAmount().toByteArray()));
-		}
-
+	public ByteString onExecute(TransactionInfo transactionInfo) throws Exception {
 		return ByteString.EMPTY;
 	}
 
 	@Override
-	public void onPrepareExecute(TransactionInfo transactionInfo, BytesHashMap<Builder> accounts) throws Exception {
-		BigInteger outputsTotal = BigInteger.ZERO;
-		TransactionInput oInput = transactionInfo.getBody().getInputs();
-		BigInteger inputAmount = BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray());
-		if (inputAmount.compareTo(BigInteger.ZERO) < 0) {
-			throw new TransactionParameterInvalidException("parameter invalid, amount must large than 0");
-		}
-
-		AccountInfo.Builder sender = accounts.get(oInput.getAddress().toByteArray());
-		AccountValue.Builder senderAccountValue = sender.getValue().toBuilder();
-
-		if (senderAccountValue.getAddressCount() > 0) {
-			throw new TransactionParameterInvalidException(
-					"parameter invalid, union account does not allow to create this transaction");
-		}
-
-		BigInteger inputBalance = this.iAccountHandler.getBalance(sender);
-
-		if (inputBalance.compareTo(BigInteger.ZERO) == -1) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, sender %s balance %s less than 0",
-							this.iCryptoHandler.bytesToHexStr(sender.getAddress().toByteArray()), inputBalance));
-		}
-		if (BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray()).compareTo(BigInteger.ZERO) == -1) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, transaction value %s less than 0",
-							BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray())));
-		}
-
-		if (BytesHelper.bytesToBigInteger(inputBalance.toByteArray()).compareTo(inputAmount) == -1) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, sender balance %s less than %s", inputBalance,
-							BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray())));
-		}
-
+	public void onPrepareExecute(TransactionInfo transactionInfo) throws Exception {
+		this.reset();
+		TransactionInput oInput = transactionInfo.getBody().getInput();
+		AccountInfo.Builder sender = getAccount(oInput.getAddress());
+		// 判断发送方账户的nonce
 		int nonce = this.iAccountHandler.getNonce(sender);
 		if (nonce > oInput.getNonce()) {
 			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, sender nonce %s is not equal with transaction nonce %s", nonce,
-							oInput.getNonce()));
+					"parameter invalid, sender nonce is large than transaction nonce");
 		}
 
-		for (TransactionOutput oOutput : transactionInfo.getBody().getOutputsList()) {
-			BigInteger outputAmount = BytesHelper.bytesToBigInteger(oOutput.getAmount().toByteArray());
-			if (outputAmount.compareTo(BigInteger.ZERO) < 0) {
-				throw new TransactionParameterInvalidException("parameter invalid, amount must large than 0");
-			}
-			outputsTotal = outputsTotal.add(outputAmount);
-
-			BigInteger balance = BytesHelper.bytesToBigInteger(oOutput.getAmount().toByteArray());
-			if (balance.compareTo(BigInteger.ZERO) == -1) {
-				throw new TransactionParameterInvalidException(
-						String.format("parameter invalid, receive balance %s less than 0", balance));
-			}
-		}
-
-		if (inputAmount.compareTo(outputsTotal) != 0) {
-			throw new TransactionParameterInvalidException(String
-					.format("parameter invalid, transaction value %s not equal with %s", inputAmount, outputsTotal));
+		BigInteger txFee = BytesHelper.bytesToBigInteger(transactionInfo.getBody().getFee().toByteArray());
+		if (txFee.compareTo(BigInteger.ZERO) < 0) {
+			throw new TransactionParameterInvalidException("parameter invalid, fee must large than 0");
 		}
 	}
 
 	@Override
-	public void onVerifySignature(TransactionInfo transactionInfo, BytesHashMap<Builder> accounts) throws Exception {
+	public void onVerifySignature(TransactionInfo transactionInfo) throws Exception {
 		TransactionInfo.Builder signatureTx = transactionInfo.toBuilder();
 		TransactionBody.Builder txBody = signatureTx.getBodyBuilder();
-		signatureTx.clearHash();
-
-		txBody = txBody.clearSignatures();
 		byte[] oMultiTransactionEncode = txBody.build().toByteArray();
-		TransactionSignature transactionSignature = transactionInfo.getBody().getSignatures();
 		byte[] hexPubKey = this.iCryptoHandler.signatureToKey(oMultiTransactionEncode,
-				transactionSignature.getSignature().toByteArray());
+				transactionInfo.getSignature().toByteArray());
 
 		if (!this.iCryptoHandler.verify(hexPubKey, oMultiTransactionEncode,
-				transactionSignature.getSignature().toByteArray())) {
+				transactionInfo.getSignature().toByteArray())) {
 			throw new TransactionVerifyException(String.format("signature %s verify fail with pubkey",
-					this.iCryptoHandler.bytesToHexStr(transactionSignature.getSignature().toByteArray())));
+					this.iCryptoHandler.bytesToHexStr(transactionInfo.getSignature().toByteArray())));
 		}
 	}
 }

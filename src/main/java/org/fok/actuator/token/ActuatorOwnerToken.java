@@ -2,14 +2,20 @@ package org.fok.actuator.token;
 
 import com.google.protobuf.ByteString;
 import onight.tfw.ntrans.api.annotation.ActorRequire;
+
+import java.math.BigInteger;
+
 import org.fok.actuator.AbstractTransactionActuator;
+import org.fok.actuator.AbstractUnTransferActuator;
 import org.fok.actuator.config.ActuatorConfig;
 import org.fok.actuator.exception.TransactionParameterInvalidException;
 import org.fok.core.api.IAccountHandler;
-import org.fok.core.api.ITransactionHandler;
+import org.fok.core.api.ITransactionResultHandler;
 import org.fok.core.cryptoapi.ICryptoHandler;
 import org.fok.core.model.Account.*;
+import org.fok.core.model.Account.AccountInfo.Builder;
 import org.fok.core.model.Block.BlockInfo;
+import org.fok.core.model.Transaction.TransactionData.OwnerTokenData;
 import org.fok.core.model.Transaction.TransactionInfo;
 import org.fok.core.model.Transaction.TransactionInput;
 import org.fok.tools.bytes.BytesHashMap;
@@ -19,115 +25,169 @@ import org.fok.tools.unit.UnitHelper;
 /**
  * Email: king.camulos@gmail.com Date: 2018/11/15 DESC:
  */
-public class ActuatorCreateToken extends AbstractTransactionActuator {
-	@ActorRequire(name = "BlockChain_Config", scope = "global")
-	ActuatorConfig actuatorConfig;
+public class ActuatorOwnerToken extends AbstractUnTransferActuator {
 
-	public ActuatorCreateToken(IAccountHandler iAccountHandler, ITransactionHandler iTransactionHandler,
-			BlockInfo blockInfo, ICryptoHandler iCryptoHandler) {
-		super(iAccountHandler, iTransactionHandler, blockInfo, iCryptoHandler);
+	public ActuatorOwnerToken(IAccountHandler iAccountHandler, ITransactionResultHandler iTransactionHandler,
+			ICryptoHandler iCryptoHandler, BlockInfo currentBlock) {
+		super(iAccountHandler, iTransactionHandler, iCryptoHandler, currentBlock);
+		// TODO Auto-generated constructor stub
 	}
 
 	@Override
-	public ByteString onExecute(TransactionInfo transactionInfo, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
-		TransactionInput input = transactionInfo.getBody().getInputs();
-		AccountInfo.Builder sender = accounts.get(input.getAddress().toByteArray());
+	public ByteString onExecute(TransactionInfo transactionInfo) throws Exception {
+		TransactionInput input = transactionInfo.getBody().getInput();
+		AccountInfo.Builder sender = this.getAccount(input.getAddress().toByteArray());
+		AccountInfo.Builder lockAccount = this
+				.getAccount(this.iCryptoHandler.hexStrToBytes(ActuatorConfig.lock_account_address));
+		AccountInfo.Builder tokenAccount = this.getAccount(iAccountHandler.tokenValueAddress());
+		OwnerTokenData oOwnerTokenData = transactionInfo.getBody().getData().getOwnerTokenData();
 
 		this.iAccountHandler.setNonce(sender, input.getNonce() + 1);
-		this.iAccountHandler.subBalance(sender, ActuatorConfig.token_create_lock_balance);
-		this.iAccountHandler.addTokenBalance(sender, input.getToken().toByteArray(),
-				BytesHelper.bytesToBigInteger(input.getAmount().toByteArray()));
+		this.iAccountHandler.subBalance(sender, fee);
 
-		TokenValue.Builder oTokenValue = TokenValue.newBuilder();
-		oTokenValue.setAddress(sender.getAddress());
-		oTokenValue.setTimestamp(transactionInfo.getBody().getTimestamp());
-		oTokenValue.setToken(input.getToken());
-		oTokenValue.setTotal(ByteString.copyFrom(BytesHelper.bigIntegerToBytes(
-				UnitHelper.fromWei(BytesHelper.bytesToBigInteger(input.getAmount().toByteArray())))));
+		if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.PUBLIC) {
+			this.iAccountHandler.subBalance(sender, ActuatorConfig.token_create_lock_balance);
+			this.iAccountHandler.addTokenBalance(sender, oOwnerTokenData.getToken().toByteArray(),
+					BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray()));
 
-		TokenValueHistory.Builder oTokenValueHistory = TokenValueHistory.newBuilder();
-		oTokenValueHistory.setContent("C");
-		oTokenValueHistory.setTotal(oTokenValue.getTotal());
-		oTokenValueHistory.setTimestamp(transactionInfo.getBody().getTimestamp());
-		oTokenValue.addHistory(oTokenValueHistory);
+			this.iAccountHandler.addBalance(lockAccount, ActuatorConfig.token_create_lock_balance);
 
-		AccountInfo.Builder tokenAccount = accounts.get(iAccountHandler.tokenValueAddress());
-		this.iAccountHandler.putToken(tokenAccount, input.getToken().toByteArray(), oTokenValue.build());
-		accounts.put(tokenAccount.getAddress().toByteArray(), tokenAccount);
-		
-		AccountInfo.Builder locker = accounts.get(iAccountHandler.lockBalanceAddress());
-		this.iAccountHandler.addBalance(locker, ActuatorConfig.token_create_lock_balance);
-		accounts.put(locker.getAddress().toByteArray(), locker);
+			TokenValue.Builder oTokenValue = TokenValue.newBuilder();
+			oTokenValue.setAddress(sender.getAddress());
+			oTokenValue.setTimestamp(transactionInfo.getBody().getTimestamp());
+			oTokenValue.setToken(oOwnerTokenData.getToken());
+			oTokenValue.setTotal(oOwnerTokenData.getAmount());
 
-		accounts.put(sender.getAddress().toByteArray(), sender);
+			TokenValueHistory.Builder oTokenValueHistory = TokenValueHistory.newBuilder();
+			oTokenValueHistory.setContent("C");
+			oTokenValueHistory.setTotal(oTokenValue.getTotal());
+			oTokenValueHistory.setTimestamp(transactionInfo.getBody().getTimestamp());
+			oTokenValue.addHistory(oTokenValueHistory);
+			this.iAccountHandler.putToken(tokenAccount, oOwnerTokenData.getToken().toByteArray(), oTokenValue.build());
+
+			this.putAccount(lockAccount);
+			this.putAccount(tokenAccount);
+		} else if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.BURN) {
+			this.iAccountHandler.subBalance(sender, ActuatorConfig.token_burn_lock_balance);
+			this.iAccountHandler.subTokenBalance(sender, oOwnerTokenData.getToken().toByteArray(),
+					BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray()));
+
+			TokenValue.Builder oTokenValue = this.iAccountHandler
+					.getToken(tokenAccount, oOwnerTokenData.getToken().toByteArray()).toBuilder();
+			oTokenValue.setTotal(ByteString.copyFrom(BytesHelper.bigIntegerToBytes(
+					BytesHelper.bytesToBigInteger(oTokenValue.getTotal().toByteArray()).subtract(UnitHelper
+							.fromWei(BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray()))))));
+
+			TokenValueHistory.Builder oTokenValueHistory = TokenValueHistory.newBuilder();
+			oTokenValueHistory.setContent("B");
+			oTokenValueHistory.setTotal(oTokenValue.getTotal());
+			oTokenValueHistory.setTimestamp(transactionInfo.getBody().getTimestamp());
+			oTokenValue.addHistory(oTokenValueHistory);
+			this.iAccountHandler.putToken(tokenAccount, oTokenValue.getToken().toByteArray(), oTokenValue.build());
+			this.iAccountHandler.addBalance(lockAccount, ActuatorConfig.token_burn_lock_balance);
+
+			this.putAccount(lockAccount);
+			this.putAccount(tokenAccount);
+		} else if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.MINT) {
+			this.iAccountHandler.subBalance(sender, ActuatorConfig.token_mint_lock_balance);
+			this.iAccountHandler.addTokenBalance(sender, oOwnerTokenData.getToken().toByteArray(),
+					BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray()));
+
+			this.iAccountHandler.addBalance(lockAccount, ActuatorConfig.token_mint_lock_balance);
+
+			TokenValue.Builder oTokenValue = this.iAccountHandler
+					.getToken(sender, oOwnerTokenData.getToken().toByteArray()).toBuilder();
+			oTokenValue.setTotal(ByteString.copyFrom(BytesHelper.bigIntegerToBytes(
+					BytesHelper.bytesToBigInteger(oTokenValue.getTotal().toByteArray()).add(UnitHelper
+							.fromWei(BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray()))))));
+
+			TokenValueHistory.Builder oTokenValueHistory = TokenValueHistory.newBuilder();
+			oTokenValueHistory.setContent("C");
+			oTokenValueHistory.setTotal(oTokenValue.getTotal());
+			oTokenValueHistory.setTimestamp(transactionInfo.getBody().getTimestamp());
+			oTokenValue.addHistory(oTokenValueHistory);
+
+			this.putAccount(lockAccount);
+			this.putAccount(tokenAccount);
+		}
+
+		this.putAccount(sender);
 		return ByteString.EMPTY;
 	}
 
 	@Override
-	public void onPrepareExecute(TransactionInfo transactionInfo, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
+	public void onPrepareExecute(TransactionInfo transactionInfo) throws Exception {
+		super.onPrepareExecute(transactionInfo);
 
-		if (transactionInfo.getBody().getInputs() == null) {
-			throw new TransactionParameterInvalidException("parameter invalid, inputs must be only one");
-		}
+		TransactionInput oInput = transactionInfo.getBody().getInput();
+		AccountInfo.Builder sender = this.getAccount(oInput.getAddress().toByteArray());
+		AccountInfo.Builder tokenRecordAccount = this.getAccount(this.iAccountHandler.tokenValueAddress());
+		OwnerTokenData oOwnerTokenData = transactionInfo.getBody().getData().getOwnerTokenData();
 
-		if (transactionInfo.getBody().getOutputsCount() != 0) {
-			throw new TransactionParameterInvalidException("parameter invalid, outputs must be null");
-		}
-
-		TransactionInput oInput = transactionInfo.getBody().getInputs();
-
-		if (oInput.getToken() == null || oInput.getToken().equals(ByteString.EMPTY)) {
+		if (oOwnerTokenData.getToken() == null || oOwnerTokenData.getToken().equals(ByteString.EMPTY)) {
 			throw new TransactionParameterInvalidException(
 					String.format("parameter invalid, token name must not be empty"));
-		}
-		String token = iCryptoHandler.bytesToHexStr(oInput.getToken().toByteArray());
-
-		// if (token.toUpperCase().startsWith("CW")) {
-		// throw new
-		// TransactionParameterInvalidException(String.format("parameter
-		// invalid, token name invalid"));
-		// }
-
-		if (!token.toUpperCase().equals(token)) {
+		} else if (oOwnerTokenData.getToken().size() > 32) {
 			throw new TransactionParameterInvalidException(String.format("parameter invalid, token name invalid"));
+		} else if (BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray())
+				.compareTo(BigInteger.ZERO) < 0) {
+			throw new TransactionParameterInvalidException(String.format("parameter invalid, token amount invalid"));
 		}
 
-		if (token.length() > 16) {
-			throw new TransactionParameterInvalidException(String.format("parameter invalid, token name invalid"));
+		if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.PUBLIC) {
+			if (BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray())
+					.compareTo(ActuatorConfig.minTokenTotal) == -1
+					|| BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray())
+							.compareTo(ActuatorConfig.maxTokenTotal) == 1) {
+				throw new TransactionParameterInvalidException(
+						String.format("parameter invalid, token amount must between %s and %s ",
+								UnitHelper.fromWei(ActuatorConfig.minTokenTotal),
+								UnitHelper.fromWei(ActuatorConfig.maxTokenTotal)));
+			} else if (this.iAccountHandler.getBalance(sender)
+					.compareTo(ActuatorConfig.token_create_lock_balance.add(fee)) == -1) {
+				throw new TransactionParameterInvalidException(
+						String.format("parameter invalid, not enough deposit to create token"));
+			} else {
+				TokenValue oTokenValue = this.iAccountHandler.getToken(tokenRecordAccount,
+						oOwnerTokenData.getToken().toByteArray());
+				if (oTokenValue != null) {
+					throw new TransactionParameterInvalidException(
+							String.format("parameter invalid, duplicate token name %s is not allowed",
+									this.iCryptoHandler.bytesToHexStr(oOwnerTokenData.getToken().toByteArray())));
+				}
+			}
+		} else if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.BURN) {
+			if (iAccountHandler.getBalance(sender).compareTo(ActuatorConfig.token_burn_lock_balance.add(fee)) == -1) {
+				throw new TransactionParameterInvalidException(
+						String.format("parameter invalid, not enough deposit to burn token"));
+			}
+			TokenValue oTokenValue = this.iAccountHandler.getToken(tokenRecordAccount,
+					oOwnerTokenData.getToken().toByteArray());
+
+			if (oTokenValue == null || !oTokenValue.getAddress().equals(oInput.getAddress())) {
+				throw new TransactionParameterInvalidException(String.format("parameter invalid, token %s not exists",
+						this.iCryptoHandler.bytesToHexStr(oOwnerTokenData.getToken().toByteArray())));
+			}
+
+			if (this.iAccountHandler.getTokenBalance(sender, oOwnerTokenData.getToken().toByteArray())
+					.compareTo(BytesHelper.bytesToBigInteger(oOwnerTokenData.getAmount().toByteArray())) == -1) {
+				throw new TransactionParameterInvalidException(
+						String.format("parameter invalid, not enough token to burn"));
+			}
+		} else if (oOwnerTokenData.getOpCode() == OwnerTokenData.OwnerTokenOpCode.MINT) {
+			if (iAccountHandler.getBalance(sender).compareTo(ActuatorConfig.token_mint_lock_balance.add(fee)) == -1) {
+				throw new TransactionParameterInvalidException(
+						String.format("parameter invalid, not enough deposit to mint token"));
+			}
+
+			TokenValue oTokenValue = this.iAccountHandler.getToken(tokenRecordAccount,
+					oOwnerTokenData.getToken().toByteArray());
+
+			if (oTokenValue == null || !oTokenValue.getAddress().equals(oInput.getAddress())) {
+				throw new TransactionParameterInvalidException(String.format("parameter invalid, token %s not exists",
+						this.iCryptoHandler.bytesToHexStr(oOwnerTokenData.getToken().toByteArray())));
+			}
 		}
 
-		if (BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray())
-				.compareTo(ActuatorConfig.minTokenTotal) == -1
-				|| BytesHelper.bytesToBigInteger(oInput.getAmount().toByteArray())
-						.compareTo(ActuatorConfig.maxTokenTotal) == 1) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, token amount must between %s and %s ",
-							UnitHelper.fromWei(ActuatorConfig.minTokenTotal),
-							UnitHelper.fromWei(ActuatorConfig.maxTokenTotal)));
-		}
-
-		AccountInfo.Builder sender = accounts.get(oInput.getAddress().toByteArray());
-		AccountValue.Builder senderAccountValue = sender.getValue().toBuilder();
-		if (BytesHelper.bytesToBigInteger(senderAccountValue.getBalance().toByteArray())
-				.compareTo(ActuatorConfig.token_create_lock_balance) == -1) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, not enough deposit %s to create token",
-							ActuatorConfig.token_create_lock_balance));
-		}
-
-		AccountInfo.Builder tokenRecordAccount = accounts.get(this.iAccountHandler.tokenValueAddress());
-		TokenValue oTokenValue = this.iAccountHandler.getToken(tokenRecordAccount, oInput.getToken().toByteArray());
-		if (oTokenValue != null) {
-			throw new TransactionParameterInvalidException(
-					String.format("parameter invalid, duplicate token name %s", token));
-		}
-
-		int nonce = senderAccountValue.getNonce();
-		if (nonce > oInput.getNonce()) {
-			throw new TransactionParameterInvalidException(
-					String.format("sender nonce %s is not equal with transaction nonce %s", nonce, oInput.getNonce()));
-		}
 	}
 }

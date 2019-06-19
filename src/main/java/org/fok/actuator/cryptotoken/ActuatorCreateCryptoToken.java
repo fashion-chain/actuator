@@ -6,11 +6,11 @@ import org.fok.core.model.Account.AccountValue;
 import org.fok.core.model.Account.CryptoTokenOriginTransactionValue;
 import org.fok.core.model.Account.CryptoTokenOriginValue;
 import org.fok.core.api.IAccountHandler;
-import org.fok.core.api.ITransactionHandler;
+import org.fok.core.api.ITransactionResultHandler;
 import org.fok.core.cryptoapi.ICryptoHandler;
 import org.fok.core.model.Account.AccountCryptoToken;
 import org.fok.core.model.Block.BlockInfo;
-import org.fok.core.model.Transaction.CryptoTokenData;
+import org.fok.core.model.Transaction.TransactionData.PublicCryptoTokenData;
 import org.fok.core.model.Transaction.TransactionInfo;
 import org.fok.core.model.Transaction.TransactionInput;
 import org.fok.tools.bytes.BytesComparisons;
@@ -27,21 +27,14 @@ import java.util.List;
  * Email: king.camulos@gmail.com Date: 2018/11/7 DESC:
  */
 public class ActuatorCreateCryptoToken extends AbstractTransactionActuator {
-	public ActuatorCreateCryptoToken(IAccountHandler iAccountHandler, ITransactionHandler iTransactionHandler,
-			BlockInfo blockInfo, ICryptoHandler iCryptoHandler) {
-		super(iAccountHandler, iTransactionHandler, blockInfo, iCryptoHandler);
+	public ActuatorCreateCryptoToken(IAccountHandler iAccountHandler, ITransactionResultHandler iTransactionHandler,
+			ICryptoHandler iCryptoHandler, BlockInfo blockInfo) {
+		super(iAccountHandler, iTransactionHandler, iCryptoHandler, blockInfo);
 	}
 
 	@Override
-	public void onPrepareExecute(TransactionInfo oMultiTransaction, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
-
-		if (oMultiTransaction.getBody().getInputs() == null) {
-			throw new TransactionParameterInvalidException("parameter invalid, inputs must be only one");
-		}
-
-		CryptoTokenData oCryptoTokenData = CryptoTokenData
-				.parseFrom(oMultiTransaction.getBody().getData().toByteArray());
+	public void onPrepareExecute(TransactionInfo oMultiTransaction) throws Exception {
+		PublicCryptoTokenData oCryptoTokenData = oMultiTransaction.getBody().getData().getCryptoTokenData();
 		if (oCryptoTokenData.getCodeCount() != oCryptoTokenData.getNameCount() || oCryptoTokenData.getCodeCount() == 0
 				|| oCryptoTokenData.getTotal() == 0) {
 			throw new TransactionParameterInvalidException("parameter invalid, crypto token count must large than 0");
@@ -51,7 +44,7 @@ public class ActuatorCreateCryptoToken extends AbstractTransactionActuator {
 			throw new TransactionParameterInvalidException("parameter invalid, crypto token symbol must not be null");
 		}
 
-		AccountInfo.Builder cryptoRecordAccount = accounts.get(iAccountHandler.cryptoTokenValueAddress());
+		AccountInfo.Builder cryptoRecordAccount = this.getAccount(iAccountHandler.cryptoTokenValueAddress());
 		CryptoTokenOriginValue oCryptoTokenOriginValue = iAccountHandler.getCryptoTokenOrigin(cryptoRecordAccount,
 				oCryptoTokenData.getSymbol().toByteArray());
 
@@ -60,28 +53,27 @@ public class ActuatorCreateCryptoToken extends AbstractTransactionActuator {
 		} else if (oCryptoTokenOriginValue.getTotal() < oCryptoTokenOriginValue.getCurrent()
 				+ oCryptoTokenData.getCodeCount()) {
 			throw new TransactionParameterInvalidException("parameter invalid, cannot create crypto token with name "
-					+ oMultiTransaction.getBody().getInputs().getSymbol());
+					+ this.iCryptoHandler.bytesToHexStr(oCryptoTokenData.getSymbol().toByteArray()));
 		} else if (!BytesComparisons.equal(oCryptoTokenOriginValue.getOwner().toByteArray(),
-				oMultiTransaction.getBody().getInputs().getAddress().toByteArray())) {
+				oMultiTransaction.getBody().getInput().getAddress().toByteArray())) {
 			throw new TransactionParameterInvalidException("parameter invalid, cannot create crypto token with name "
-					+ oMultiTransaction.getBody().getInputs().getSymbol());
+					+ this.iCryptoHandler.bytesToHexStr(oCryptoTokenData.getSymbol().toByteArray()));
 		} else if (oCryptoTokenData.getSymbol().toByteArray().length > 32) {
 			throw new TransactionParameterInvalidException("parameter invalid, crypto token symbol too long");
 		} else if (!BytesComparisons.equal(oCryptoTokenOriginValue.getOwner().toByteArray(),
-				oMultiTransaction.getBody().getInputs().getAddress().toByteArray())) {
+				oMultiTransaction.getBody().getInput().getAddress().toByteArray())) {
 			throw new TransactionParameterInvalidException("parameter invalid, cannot create crypto token with address "
-					+ iCryptoHandler.bytesToHexStr(oMultiTransaction.getBody().getInputs().getAddress().toByteArray()));
+					+ iCryptoHandler.bytesToHexStr(oMultiTransaction.getBody().getInput().getAddress().toByteArray()));
 		} else if (oCryptoTokenData.getTotal() != oCryptoTokenOriginValue.getTotal()) {
 			throw new TransactionParameterInvalidException("parameter invalid, transaction data invalid");
 		}
 
 		if (oCryptoTokenOriginValue == null || oCryptoTokenOriginValue.getTxHashCount() == 0) {
 			// 只有第一次创建，需要扣除手续费
-			AccountInfo.Builder sender = accounts
-					.get(oMultiTransaction.getBody().getInputs().getAddress().toByteArray());
-			AccountValue.Builder senderValue = sender.getValueBuilder();
-			if (BytesHelper.bytesToBigInteger(senderValue.getBalance().toByteArray())
-					.compareTo(ActuatorConfig.crypto_token_create_lock_balance) < 0) {
+			AccountInfo.Builder sender = this
+					.getAccount(oMultiTransaction.getBody().getInput().getAddress());
+			if (this.iAccountHandler.getBalance(sender)
+					.compareTo(ActuatorConfig.crypto_token_create_lock_balance.add(fee)) < 0) {
 				throw new TransactionParameterInvalidException(
 						"parameter invalid, donot have enouth balance to create crypto-token");
 			}
@@ -98,25 +90,42 @@ public class ActuatorCreateCryptoToken extends AbstractTransactionActuator {
 					+ oCryptoTokenData.getNameCount()) > oCryptoTokenOriginValue.getTotal()) {
 				throw new TransactionParameterInvalidException("parameter invalid, too many crypto token");
 			}
+
+			AccountInfo.Builder sender = this
+					.getAccount(oMultiTransaction.getBody().getInput().getAddress());
+			if (this.iAccountHandler.getBalance(sender).compareTo(fee) < 0) {
+				throw new TransactionParameterInvalidException(
+						"parameter invalid, donot have enouth balance to create crypto-token");
+			}
 		}
 
-		super.onPrepareExecute(oMultiTransaction, accounts);
+		super.onPrepareExecute(oMultiTransaction);
 	}
 
 	@Override
-	public ByteString onExecute(TransactionInfo oMultiTransaction, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
-
-		CryptoTokenData oCryptoTokenData = CryptoTokenData
+	public ByteString onExecute(TransactionInfo oMultiTransaction) throws Exception {
+		PublicCryptoTokenData oCryptoTokenData = PublicCryptoTokenData
 				.parseFrom(oMultiTransaction.getBody().getData().toByteArray());
 
-		TransactionInput input = oMultiTransaction.getBody().getInputs();
-		AccountInfo.Builder sender = accounts.get(input.getAddress().toByteArray());
+		TransactionInput input = oMultiTransaction.getBody().getInput();
+		AccountInfo.Builder sender = this.getAccount(input.getAddress());
+		AccountInfo.Builder lockAccount = this
+				.getAccount(this.iCryptoHandler.hexStrToBytes(ActuatorConfig.lock_account_address));
+
 		iAccountHandler.setNonce(sender, input.getNonce() + 1);
 
-		AccountInfo.Builder cryptoRecordAccount = accounts.get(iAccountHandler.cryptoTokenValueAddress());
+		AccountInfo.Builder cryptoRecordAccount = this.getAccount(iAccountHandler.cryptoTokenValueAddress());
 		CryptoTokenOriginValue.Builder oCryptoTokenOriginValue = iAccountHandler
 				.getCryptoTokenOrigin(cryptoRecordAccount, oCryptoTokenData.getSymbol().toByteArray()).toBuilder();
+
+		if (oCryptoTokenOriginValue == null || oCryptoTokenOriginValue.getTxHashCount() == 0) {
+			oCryptoTokenOriginValue = CryptoTokenOriginValue.newBuilder();
+			this.iAccountHandler.subBalance(sender, ActuatorConfig.crypto_token_create_lock_balance.add(fee));
+			this.iAccountHandler.addBalance(lockAccount, ActuatorConfig.crypto_token_create_lock_balance.add(fee));
+		} else {
+			this.iAccountHandler.subBalance(sender, fee);
+			this.iAccountHandler.addBalance(lockAccount, fee);
+		}
 
 		AccountInfo.Builder cryptoAccount = this.iAccountHandler
 				.createAccount(this.iCryptoHandler.sha3(oCryptoTokenData.getSymbol().toByteArray()));
@@ -151,8 +160,10 @@ public class ActuatorCreateCryptoToken extends AbstractTransactionActuator {
 		this.iAccountHandler.putCryptoTokenOrigin(cryptoRecordAccount, oCryptoTokenData.getSymbol().toByteArray(),
 				oCryptoTokenOriginValue.build());
 
-		accounts.put(cryptoRecordAccount.getAddress().toByteArray(), cryptoRecordAccount);
-		accounts.put(sender.getAddress().toByteArray(), sender);
+		this.putAccount(cryptoRecordAccount);
+		this.putAccount(cryptoAccount);
+		this.putAccount(sender);
+		this.putAccount(lockAccount);
 
 		return ByteString.EMPTY;
 	}

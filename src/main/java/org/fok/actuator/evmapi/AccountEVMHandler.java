@@ -4,7 +4,6 @@ import com.google.protobuf.ByteString;
 import lombok.Data;
 import org.fok.core.api.IAccountEVMHandler;
 import org.fok.core.api.IAccountHandler;
-import org.fok.core.api.ITransactionHandler;
 import org.fok.core.cryptoapi.ICryptoHandler;
 import org.fok.core.model.Account.AccountInfo;
 import org.fok.tools.bytes.BytesHashMap;
@@ -18,7 +17,6 @@ import java.util.Map;
 @Data
 public class AccountEVMHandler implements IAccountEVMHandler {
 	IAccountHandler accountHandler;
-	ITransactionHandler transactionHandler;
 	ICryptoHandler cryptoHandler;
 	BytesHashMap<AccountInfo.Builder> touchAccount;
 

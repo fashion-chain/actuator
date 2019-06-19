@@ -4,67 +4,72 @@ import com.google.protobuf.ByteString;
 
 import lombok.extern.slf4j.Slf4j;
 
-import org.fok.actuator.AbstractTransactionActuator;
+import org.fok.actuator.AbstractUnTransferActuator;
+import org.fok.actuator.config.ActuatorConfig;
 import org.fok.actuator.evmapi.AccountEVMHandler;
 import org.fok.actuator.exception.TransactionParameterInvalidException;
 import org.fok.core.api.IAccountHandler;
-import org.fok.core.api.ITransactionHandler;
+import org.fok.core.api.ITransactionResultHandler;
 import org.fok.core.cryptoapi.ICryptoHandler;
 import org.fok.core.model.Account.AccountInfo;
 import org.fok.core.model.Block.BlockInfo;
 import org.fok.core.model.Transaction.TransactionInfo;
 import org.fok.core.model.Transaction.TransactionInput;
-import org.fok.core.model.Transaction.TransactionOutput;
+import org.fok.core.model.Transaction.TransactionData.CallContractData;
 import org.fok.tools.bytes.BytesHashMap;
 
 /**
  * Email: king.camulos@gmail.com Date: 2018/11/7 DESC:
  */
 @Slf4j
-public class ActuatorCallContract extends AbstractTransactionActuator {
-	public ActuatorCallContract(IAccountHandler iAccountHandler, ITransactionHandler iTransactionHandler,
-			BlockInfo oBlock, ICryptoHandler iEncApiHandler) {
-		super(iAccountHandler, iTransactionHandler, oBlock, iEncApiHandler);
+public class ActuatorCallContract extends AbstractUnTransferActuator {
+	public ActuatorCallContract(IAccountHandler iAccountHandler, ITransactionResultHandler iTransactionHandler,
+			ICryptoHandler iEncApiHandler, BlockInfo oBlock) {
+		super(iAccountHandler, iTransactionHandler, iEncApiHandler, oBlock);
 	}
 
 	@Override
-	public void onPrepareExecute(TransactionInfo transactionInfo, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
-		if (transactionInfo.getBody().getInputs() == null || transactionInfo.getBody().getOutputsCount() != 1) {
-			throw new TransactionParameterInvalidException(
-					"parameter invalid, the inputs and outputs must be only one");
-		}
-		TransactionOutput output = transactionInfo.getBody().getOutputs(0);
+	public void onPrepareExecute(TransactionInfo transactionInfo) throws Exception {
+		super.onPrepareExecute(transactionInfo);
 
-		AccountInfo.Builder account = accounts.get(output.getAddress().toByteArray());
+		CallContractData oCallContractData = transactionInfo.getBody().getData().getCallContractData();
+
+		AccountInfo.Builder account = this.getAccount(oCallContractData.getContract());
 		if (account.getValue().getCode() == null) {
-			throw new TransactionParameterInvalidException(
-					"parameter invalid, address " + this.iCryptoHandler.bytesToHexStr(output.getAddress().toByteArray())
-							+ " is not validate contract.");
+			throw new TransactionParameterInvalidException("parameter invalid, address "
+					+ this.iCryptoHandler.bytesToHexStr(oCallContractData.getContract().toByteArray())
+					+ " is not validate contract.");
 		}
 
-		super.onPrepareExecute(transactionInfo, accounts);
+		AccountInfo.Builder callAccount = this
+				.getAccount(transactionInfo.getBody().getInput().getAddress());
+		if (this.iAccountHandler.getBalance(callAccount).compareTo(fee) < 0) {
+			throw new TransactionParameterInvalidException("parameter invalid, not have enough balance");
+		}
 	}
 
 	@Override
-	public ByteString onExecute(TransactionInfo transactionInfo, BytesHashMap<AccountInfo.Builder> accounts)
-			throws Exception {
+	public ByteString onExecute(TransactionInfo transactionInfo) throws Exception {
 		// VM vm = new VM();
-		AccountInfo.Builder existsContract = accounts
-				.get(transactionInfo.getBody().getOutputs(0).getAddress().toByteArray());
-		AccountInfo.Builder callAccount = accounts
-				.get(transactionInfo.getBody().getInputs().getAddress().toByteArray());
+		TransactionInput oInput = transactionInfo.getBody().getInput();
+		
+		AccountInfo.Builder lockAccount = this
+				.getAccount(this.iCryptoHandler.hexStrToBytes(ActuatorConfig.lock_account_address));
+		CallContractData oCallContractData = transactionInfo.getBody().getData().getCallContractData();
+		AccountInfo.Builder existsContract = this.getAccount(oCallContractData.getContract());
+		AccountInfo.Builder callAccount = this
+				.getAccount(transactionInfo.getBody().getInput().getAddress());
 
-		this.iAccountHandler.setNonce(callAccount, transactionInfo.getBody().getInputs().getNonce() + 1);
+		this.iAccountHandler.setNonce(callAccount, oInput.getNonce() + 1);
+		this.iAccountHandler.subBalance(callAccount, fee);
 		this.iAccountHandler.increaseNonce(existsContract);
-
+		this.iAccountHandler.addBalance(lockAccount, fee);
+		
 		AccountEVMHandler accountEVMHandler = new AccountEVMHandler();
 		accountEVMHandler.setAccountHandler(this.iAccountHandler);
-		accountEVMHandler.setTransactionHandler(this.iTransactionHandler);
 		accountEVMHandler.setCryptoHandler(this.iCryptoHandler);
-		accountEVMHandler.setTouchAccount(accounts);
+		// accountEVMHandler.setTouchAccount(accounts);
 
-		TransactionInput oInput = transactionInfo.getBody().getInputs();
 		// TODO evm
 		// ProgramInvokeImpl programInvoke = new
 		// ProgramInvokeImpl(existsContract.getAddress().toByteArray(),
