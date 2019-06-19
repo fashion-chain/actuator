@@ -49,11 +49,7 @@ contract Seller{
     return sign;
   }
 
-  function setSellerData(string clothIDAndSellerID,string clothData) public {
-    if(isMaster(msg.sender)){
-      sellerDataBase[clothIDAndSellerID] = clothData;
-    }
-  }
+
   function getSellerData(string clothIDAndSellerID)public view returns(string){
     return sellerDataBase[clothIDAndSellerID];
   }
@@ -66,7 +62,11 @@ contract Seller{
   function getSellerAddress(string sellerID) public view returns(address){
       return sellerAddress[sellerID];
   }
-
+  function setSellerData(string clothIDAndSellerID,string clothData) public {
+    if(isMaster(msg.sender)){
+      sellerDataBase[clothIDAndSellerID] = clothData;
+    }
+  }
   function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
     return clothPrice.mul(clothsols);
   }

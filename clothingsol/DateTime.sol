@@ -24,18 +24,7 @@ contract DateTime {
 
         uint16 constant ORIGIN_YEAR = 1970;
 
-        function isLeapYear(uint16 year) public pure returns (bool) {
-                if (year % 4 != 0) {
-                        return false;
-                }
-                if (year % 100 != 0) {
-                        return true;
-                }
-                if (year % 400 != 0) {
-                        return false;
-                }
-                return true;
-        }
+
 
         function leapYearsBefore(uint year) public pure returns (uint) {
                 year -= 1;
@@ -101,7 +90,18 @@ contract DateTime {
                 // Day of week.
                 dt.weekday = getWeekday(timestamp);
         }
-
+        function isLeapYear(uint16 year) public pure returns (bool) {
+                if (year % 4 != 0) {
+                        return false;
+                }
+                if (year % 100 != 0) {
+                        return true;
+                }
+                if (year % 400 != 0) {
+                        return false;
+                }
+                return true;
+        }
         function getYear(uint timestamp) public pure returns (uint16) {
                 uint secondsAccountedFor = 0;
                 uint16 year;

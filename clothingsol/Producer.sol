@@ -271,14 +271,16 @@ contract Producer is DateTime{
       estimateTime[_clothID] = getWeekday(_estimateTime);
     }
   }
-  function  getEstimateTime(string _clothID) public view returns(uint256){
-    return estimateTime[_clothID];
-  }
+
 
   function setShipTime(string _orderID,uint256 _shipTime) public{
     if(isMaster(msg.sender)){
       shipTime[_orderID] = _shipTime;
     }
+  }
+
+  function  getEstimateTime(string _clothID) public view returns(uint256){
+    return estimateTime[_clothID];
   }
 
   function  getShipTime(string _orderID) public view returns(uint256){
@@ -293,11 +295,7 @@ contract Producer is DateTime{
   function getOrderData(string _orderID) public view returns(string){
     return orderData[_orderID];
   }
-  function setProducerAddr(string _producerID,address _producerAddr) public{
-    if(isMaster(msg.sender)){
-      producerAddr[_producerID] = _producerAddr;
-    }
-  }
+
   function getProducerAddr(string _producerID) public view returns(address){
     return producerAddr[_producerID];
   }
@@ -312,6 +310,11 @@ contract Producer is DateTime{
 
   function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
     return clothPrice.mul(clothsols);
+  }
+  function setProducerAddr(string _producerID,address _producerAddr) public{
+    if(isMaster(msg.sender)){
+      producerAddr[_producerID] = _producerAddr;
+    }
   }
 
 

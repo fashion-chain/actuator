@@ -124,7 +124,16 @@ contract ControllerContract{
   function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
     return producerContract.computerIssue(clothPrice,clothsols);
   }
-  
+
+  function checkConfirmNumber(string _clothID,uint256 _confirmNumBest)public view returns(bool){
+      bool sign = false;
+      uint256 confirmData =  producerContract.getConfirmNumber(_clothID);
+      if(confirmData == _confirmNumBest){
+        sign = true;
+      }
+      return sign;
+  }
+
 
 
 

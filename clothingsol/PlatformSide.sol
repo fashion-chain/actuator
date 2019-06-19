@@ -44,14 +44,7 @@ contract PlatformSide{
     owner = msg.sender;
   }
 
-  //Check if it is the creator
-  function isMaster(address checkAddress) private view returns(bool){
-    bool sign = false;
-    if(owner == checkAddress){
-      sign = true;
-    }
-    return sign;
-  }
+
 
   //Set up a transfer address
   function setTransferAddress(address _transferAddr) public {
@@ -64,13 +57,15 @@ contract PlatformSide{
     return platformAddr;
   }
 
-
-  //Set up a gas
-  function setGas(string oriderID,uint256 _gasvalue) public {
-    if(isMaster(msg.sender)){
-      orderGas[oriderID] = _gasvalue.mul(0.1);
+  //Check if it is the creator
+  function isMaster(address checkAddress) private view returns(bool){
+    bool sign = false;
+    if(owner == checkAddress){
+      sign = true;
     }
+    return sign;
   }
+
   //Get gas
   function getGas(string oriderID) public view returns(uint256){
     return orderGas[oriderID];
@@ -79,5 +74,10 @@ contract PlatformSide{
   function computerIssue(uint256 clothPrice,uint256 clothsols)public view returns(uint256){
     return clothPrice.mul(clothsols);
   }
-
+  //Set up a gas
+  function setGas(string oriderID,uint256 _gasvalue) public {
+    if(isMaster(msg.sender)){
+      orderGas[oriderID] = _gasvalue.mul(0.1);
+    }
+  }
 }
